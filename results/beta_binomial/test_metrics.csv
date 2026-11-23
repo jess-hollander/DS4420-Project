@@ -1,0 +1,6 @@
+"model (2025-26 test season, n=1230)",accuracy,log_loss,brier
+Beta-Binomial (EB prior + carry-over),0.6878,0.6101,0.2105
+"Beta-Binomial (EB prior, no carry-over)",0.674,0.6109,0.211
+"Beta-Binomial (uniform Beta(1,1) prior)",0.6724,0.6163,0.2129
+Raw win % (log5),0.6732,0.668,0.2186
+Always pick home team,0.5537,0.6874,0.2471
