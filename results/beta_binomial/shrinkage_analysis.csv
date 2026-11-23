@@ -1,0 +1,4 @@
+games_played,n_team_seasons,raw_winpct_MAE,posterior_mean_MAE,raw_winpct_RMSE,posterior_mean_RMSE
+10,150,0.1273,0.0947,0.1601,0.1146
+20,150,0.1022,0.0878,0.127,0.1067
+41,150,0.1002,0.0987,0.1216,0.1184

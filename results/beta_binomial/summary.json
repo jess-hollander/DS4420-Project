@@ -1,0 +1,44 @@
+{
+  "prior": {
+    "alpha0": 6.2685,
+    "beta0": 6.3315,
+    "mean": 0.4975,
+    "strength": 12.600000000000001,
+    "loglik": -467.0714160905535,
+    "mom_mean": 0.5,
+    "mom_strength": 12.403391555027978
+  },
+  "best_rho": 0.15,
+  "home_court_posterior": {
+    "alpha": 3398.0,
+    "beta": 2744.0,
+    "mean": 0.5532399869749267
+  },
+  "test_metrics": {
+    "Beta-Binomial (EB prior + carry-over)": {
+      "accuracy": 0.6878048780487804,
+      "log_loss": 0.6101438279272916,
+      "brier": 0.21053070857652845
+    },
+    "Beta-Binomial (EB prior, no carry-over)": {
+      "accuracy": 0.6739837398373983,
+      "log_loss": 0.6109039645663952,
+      "brier": 0.21097353244297792
+    },
+    "Beta-Binomial (uniform Beta(1,1) prior)": {
+      "accuracy": 0.6723577235772358,
+      "log_loss": 0.6163497308370112,
+      "brier": 0.21291543402326701
+    },
+    "Raw win % (log5)": {
+      "accuracy": 0.6731707317073171,
+      "log_loss": 0.6680051653720855,
+      "brier": 0.21860749447373914
+    },
+    "Always pick home team": {
+      "accuracy": 0.5536585365853659,
+      "log_loss": 0.6873789359272507,
+      "brier": 0.24712142243373653
+    }
+  }
+}
