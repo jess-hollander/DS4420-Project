@@ -1,18 +1,8 @@
 """
-Trains and evaluates our Beta-Binomial model, then saves the results and figures.
+Train and evaluate the Beta-Binomial model (train 2021-22 to 2024-25, test 2025-26).
 
-Train/test split
-----------------
-    Training seasons : 2021-22, 2022-23, 2023-24, 2024-25
-    Test season      : 2025-26
-We only use the training seasons to pick the empirical Bayes prior and the
-carry-over weight rho. Every prediction is made before the game happens using
-only earlier games, and the test metrics only include 2025-26 games.
-
-How to run it (from the main project folder):
-    python data/fetch_nba_data.py        # only need to do this once, makes data/games.csv
-    python -m beta_binomial.run
-Everything gets saved to results/beta_binomial/.
+Run from the project folder: python -m beta_binomial.run
+Outputs are saved to results/beta_binomial/.
 """
 
 import json
@@ -38,10 +28,10 @@ OUT = ROOT / "results" / "beta_binomial"
 TRAIN_SEASONS = ["2021-22", "2022-23", "2023-24", "2024-25"]
 TEST_SEASON = "2025-26"
 RHO_GRID = np.round(np.arange(0.0, 1.0001, 0.05), 2)
-CHECKPOINTS = [10, 20, 41]   # how many games into the season we check for the shrinkage analysis
+CHECKPOINTS = [10, 20, 41]   # games played, for the shrinkage analysis
 
-# Colors and style settings for the plots
-BLUE, ORANGE, AQUA = "#2a78d6", "#eb6834", "#1baf7a"
+# Plot style
+BLUE, ORANGE = "#2a78d6", "#eb6834"
 INK, INK2, GRID = "#0b0b0b", "#52514e", "#e4e3df"
 plt.rcParams.update({
     "font.size": 10, "axes.edgecolor": INK2, "axes.labelcolor": INK,
@@ -53,12 +43,7 @@ plt.rcParams.update({
 
 
 def raw_winpct_probs(p):
-    """
-    Baseline that doesn't use a prior at all. It plugs each team's raw win %
-    going into the game into the log5 formula, with the same home court term
-    as the Bayesian model. A team's win % is set to 0.5 before its first game,
-    and we clip it to [0.02, 0.98] so the log loss doesn't blow up.
-    """
+    """Baseline: log5 on raw pre-game win % (clipped to [0.02, 0.98])."""
     def pct(w, l):
         n = w + l
         return np.clip(np.where(n > 0, w / np.maximum(n, 1), 0.5), 0.02, 0.98)
@@ -68,18 +53,14 @@ def raw_winpct_probs(p):
 
 
 def season_records_at(history, games_played):
-    """Get each team's posterior and record at the point where it has played `games_played` games."""
+    """Each team's posterior and record after `games_played` games."""
     h = history.assign(GP=history["W"] + history["L"])
     h = h[h["GP"] == games_played]
     return h.sort_values("GAME_DATE").groupby(["SEASON", "TEAM"]).head(1)
 
 
 def shrinkage_analysis(history, final_records, seasons):
-    """
-    Checks the main idea behind the project. After k games, which is better at
-    predicting how a team does for the rest of the season: the posterior mean
-    or their raw win %?
-    """
+    """Compare posterior mean vs. raw win % at predicting rest-of-season win %."""
     rows = []
     fin = final_records.set_index(["SEASON", "TEAM"])
     for k in CHECKPOINTS:
@@ -106,16 +87,14 @@ def main():
     train_mask = games["SEASON"].isin(TRAIN_SEASONS)
     print(f"{len(games):,} games | train {train_mask.sum():,} | test {(~train_mask).sum():,}")
 
-    # Fit the prior on the training seasons
+    # Fit the empirical Bayes prior on training seasons
     rec_train = team_season_records(games[train_mask])
     prior = fit_prior_empirical_bayes(rec_train["wins"], rec_train["games"])
     print(f"\nEmpirical-Bayes prior: Beta({prior['alpha0']:.2f}, {prior['beta0']:.2f})  "
           f"mean={prior['mean']:.3f}, strength={prior['strength']:.1f} pseudo-games "
           f"(method of moments: {prior['mom_strength']:.1f})")
 
-    # Tune rho on the training data.
-    # The carry-over doesn't do anything in the first season since there's no
-    # previous season, so we tune on 2022-23 through 2024-25.
+    # Tune rho on training seasons (skip 2021-22, which has no previous season)
     tune_seasons = TRAIN_SEASONS[1:]
     tune = []
     for rho in RHO_GRID:
@@ -128,13 +107,12 @@ def main():
     tune.to_csv(OUT / "rho_tuning.csv", index=False)
     print(f"Best carry-over rho (train log loss): {best_rho:.2f}")
 
-    # Run the final model on all the data
+    # Run the final model
     model = BetaBinomialNBA(prior["alpha0"], prior["beta0"], rho=best_rho, n_samples=2000, seed=42)
     preds, history = model.run(games)
     preds.to_csv(OUT / "predictions.csv", index=False)
 
-    # Other versions of the model and baselines to compare against. They all
-    # go through the same game-by-game process so the comparison is fair.
+    # Reduced model versions for comparison
     variants = {
         "Beta-Binomial (EB prior + carry-over)": preds,
         "Beta-Binomial (EB prior, no carry-over)":
@@ -161,7 +139,7 @@ def main():
     res_df.to_csv(OUT / "test_metrics.csv")
     print("\n" + res_df.to_string())
 
-    # Accuracy at different points in the test season
+    # Test accuracy by stage of season
     tp = tp.assign(GAME_NUM=np.maximum(tp["HOME_W"] + tp["HOME_L"], tp["AWAY_W"] + tp["AWAY_L"]) + 1,
                    P_RAW=p_raw)
     stage = pd.cut(tp["GAME_NUM"], [0, 20, 41, 61, 83], labels=["1-20", "21-41", "42-61", "62-82"])
@@ -175,13 +153,13 @@ def main():
     by_stage.to_csv(OUT / "accuracy_by_stage.csv")
     print("\nTest accuracy by stage of season:\n" + by_stage.to_string())
 
-    # Shrinkage analysis (to show that raw W-L records are noisy)
+    # Shrinkage analysis
     final_rec = team_season_records(games)
     shrink = shrinkage_analysis(history, final_rec, games["SEASON"].unique()).round(4)
     shrink.to_csv(OUT / "shrinkage_analysis.csv", index=False)
     print("\nPredicting rest-of-season win % (all seasons):\n" + shrink.to_string(index=False))
 
-    # Posteriors at the end of the test season
+    # End-of-season posteriors
     last = history[history["SEASON"] == TEST_SEASON].sort_values("GAME_DATE").groupby("TEAM").tail(1)
     ci = beta_credible_interval(last["ALPHA"].to_numpy(), last["BETA"].to_numpy(), seed=1)
     post = last.assign(POST_MEAN=last["ALPHA"] / (last["ALPHA"] + last["BETA"]),
@@ -201,76 +179,75 @@ def main():
     (OUT / "summary.json").write_text(json.dumps(summary, indent=2))
     print(f"\nHome-court posterior: Beta({eta_a:.0f}, {eta_b:.0f}), mean {eta_a/(eta_a+eta_b):.3f}")
 
-    make_figures(post, preds.loc[test], p_raw, history, prior, best_rho)
+    # Calibration bins (table only)
+    calibration_table(tp["HOME_WIN"], tp["P_HOME"]).to_csv(OUT / "calibration_beta_binomial.csv", index=False)
+
+    make_figures(post, variants, p_raw, train_home_rate)
     print(f"\nAll outputs written to {OUT.relative_to(ROOT)}")
 
 
-# ---------------------------------------------------------------------------
 # Figures
-# ---------------------------------------------------------------------------
-def make_figures(post, test_preds, p_raw, history, prior, rho):
-    # Figure 1: credible intervals at the end of the season compared to raw win %
-    fig, ax = plt.subplots(figsize=(6.5, 7.2))
+def early_mask(p, max_game=20):
+    """Games within both teams' first `max_game` games of the season."""
+    gp = np.maximum(p["HOME_W"] + p["HOME_L"], p["AWAY_W"] + p["AWAY_L"]) + 1
+    return (gp <= max_game).to_numpy()
+
+
+def make_figures(post, variants, p_raw, home_rate):
+    # Figure 1: test-season results table
+    labels = {
+        "Beta-Binomial (EB prior + carry-over)": "Beta-Binomial: EB prior + carry-over (final)",
+        "Beta-Binomial (EB prior, no carry-over)": "Beta-Binomial: EB prior, no carry-over",
+        "Beta-Binomial (uniform Beta(1,1) prior)": "Beta-Binomial: uniform Beta(1,1) prior",
+    }
+    rows = {}
+    for name, p in variants.items():
+        tp = p[p["SEASON"] == TEST_SEASON]
+        y, e, pr = tp["HOME_WIN"].to_numpy(), early_mask(tp), tp["P_HOME"].to_numpy()
+        rows[labels[name]] = {**evaluate(y, pr), "early": evaluate(y[e], pr[e])["accuracy"]}
+    baselines = {"Baseline: raw win % (log5)": p_raw,
+                 "Baseline: always pick home team": np.full(len(y), home_rate)}
+    for name, pr in baselines.items():
+        rows[name] = {**evaluate(y, pr), "early": evaluate(y[e], pr[e])["accuracy"]}
+
+    df = pd.DataFrame(rows).T[["accuracy", "early", "log_loss", "brier"]]
+    best = {"accuracy": df["accuracy"].max(), "early": df["early"].max(),
+            "log_loss": df["log_loss"].min(), "brier": df["brier"].min()}
+    cell = [[f"{v:.1%}" if k in ("accuracy", "early") else f"{v:.3f}" for k, v in r.items()]
+            for _, r in df.iterrows()]
+    fig, ax = plt.subplots(figsize=(7.0, 2.0))
+    ax.axis("off")
+    tbl = ax.table(cellText=cell, rowLabels=df.index, loc="center", cellLoc="center",
+                   colLabels=["Accuracy", "Accuracy\n(games 1–20)", "Log loss", "Brier"],
+                   rowLoc="left", edges="horizontal")
+    tbl.auto_set_font_size(False)
+    tbl.set_fontsize(8.5)
+    tbl.scale(1, 1.45)
+    for (r, c), cl in tbl.get_celld().items():
+        cl.set_edgecolor("#c3c2b7")
+        cl.set_linewidth(0.6)
+        if r == 0:
+            cl.set_text_props(weight="bold", color=INK)
+            cl.set_height(cl.get_height() * 1.5)
+        elif c >= 0 and np.isclose(df.iloc[r - 1, c], best[list(best)[c]]):
+            cl.set_text_props(weight="bold")  # best value per column
+    fig.savefig(OUT / "report_fig1_results_table.png")
+    plt.close(fig)
+
+    # Figure 2: end-of-season team strength (95% credible interval) vs. raw win %
+    fig, ax = plt.subplots(figsize=(6.5, 5.6))
     y = np.arange(len(post))[::-1]
     ax.hlines(y, post["CI_LOW"], post["CI_HIGH"], color=BLUE, lw=2, label="95% credible interval")
-    ax.plot(post["POST_MEAN"], y, "o", ms=6, color=BLUE, mec="white", mew=1.5, label="Posterior mean")
-    ax.plot(post["RAW_WINPCT"], y, "D", ms=5, color=ORANGE, mec="white", mew=1, label="Raw win %")
+    ax.plot(post["POST_MEAN"], y, "o", ms=5.5, color=BLUE, mec="white", mew=1.2, label="Posterior mean")
+    ax.plot(post["RAW_WINPCT"], y, "D", ms=4.5, color=ORANGE, mec="white", mew=0.8, label="Raw win %")
     ax.axvline(0.5, color=INK2, lw=1, ls="--")
-    ax.set_yticks(y, [f"{t} ({w:.0f}-{l:.0f})" for t, w, l in zip(post["TEAM"], post["W"], post["L"])],
-                  fontsize=8)
-    ax.set_xlabel("Team strength θ  (P(win vs. average team, neutral court))")
-    ax.set_title(f"Posterior team strength, end of {TEST_SEASON}", loc="left", fontsize=11, color=INK)
+    ax.set_yticks(y, [f"{t} ({w:.0f}–{l:.0f})" for t, w, l in zip(post["TEAM"], post["W"], post["L"])],
+                  fontsize=7.5)
+    ax.set_ylim(-0.8, len(post) - 0.2)
+    ax.set_xlabel("Team strength θ = P(beat an average team on a neutral court)", fontsize=9)
     ax.grid(axis="y", visible=False)
     ax.legend(loc="lower right", fontsize=8)
-    fig.savefig(OUT / "fig1_posterior_credible_intervals.png")
-    plt.close(fig)
-
-    # Figure 2: calibration on the test season
-    min_n = 20  # skip bins with too few games to get a reliable win rate
-    cal_bb = calibration_table(test_preds["HOME_WIN"], test_preds["P_HOME"], n_bins=10)
-    cal_raw = calibration_table(test_preds["HOME_WIN"], p_raw, n_bins=10)
-    cal_bb.to_csv(OUT / "calibration_beta_binomial.csv", index=False)
-    cal_bb, cal_raw = cal_bb[cal_bb["n"] >= min_n], cal_raw[cal_raw["n"] >= min_n]
-    fig, ax = plt.subplots(figsize=(5, 4.6))
-    ax.plot([0, 1], [0, 1], color=INK2, lw=1, ls="--", label="Perfect calibration")
-    ax.plot(cal_raw["mean_pred"], cal_raw["obs_rate"], "-D", color=ORANGE, lw=2, ms=6,
-            mec="white", label="Raw win % (log5)")
-    ax.plot(cal_bb["mean_pred"], cal_bb["obs_rate"], "-o", color=BLUE, lw=2, ms=8,
-            mec="white", label="Beta-Binomial")
-    ax.set_xlim(0, 1), ax.set_ylim(0, 1)
-    ax.set_xlabel("Predicted P(home team wins)")
-    ax.set_ylabel("Observed home win rate")
-    ax.set_title(f"Calibration on {TEST_SEASON} test games", loc="left", fontsize=11, color=INK)
-    ax.legend(loc="upper left", fontsize=8)
-    ax.text(0.98, 0.02, f"10 equal-width bins; bins with < {min_n} games omitted",
-            transform=ax.transAxes, ha="right", va="bottom", fontsize=7, color=INK2)
-    fig.savefig(OUT / "fig2_calibration.png")
-    plt.close(fig)
-
-    # Figure 3 (extra): how the posterior changes over the season for 3 teams
-    # (the best team, a middle team and the worst team)
-    h = history[history["SEASON"] == TEST_SEASON]
-    last = h.sort_values("GAME_DATE").groupby("TEAM").tail(1)
-    last = last.assign(M=last["ALPHA"] / (last["ALPHA"] + last["BETA"])).sort_values("M")
-    picks = [last["TEAM"].iloc[-1], last["TEAM"].iloc[len(last) // 2], last["TEAM"].iloc[0]]
-    fig, ax = plt.subplots(figsize=(6.5, 3.8))
-    for team, col in zip(picks, [BLUE, AQUA, ORANGE]):
-        d = h[h["TEAM"] == team].sort_values("GAME_DATE")
-        d = d[d["W"] + d["L"] > 0].drop_duplicates(subset=["W", "L"])
-        gp = d["W"] + d["L"]
-        mean = d["ALPHA"] / (d["ALPHA"] + d["BETA"])
-        sd = np.sqrt(d["ALPHA"] * d["BETA"] / ((d["ALPHA"] + d["BETA"]) ** 2 * (d["ALPHA"] + d["BETA"] + 1)))
-        ax.fill_between(gp, mean - 2 * sd, mean + 2 * sd, color=col, alpha=0.15, lw=0)
-        ax.plot(gp, mean, color=col, lw=2)
-        ax.plot(gp, d["W"] / gp, color=col, lw=1, ls=":")
-        ax.text(gp.iloc[-1] + 1, mean.iloc[-1], team, color=INK, va="center", fontsize=9)
-    ax.axhline(0.5, color=INK2, lw=1, ls="--")
-    ax.set_xlim(0, 90), ax.set_ylim(0, 1)
-    ax.set_xlabel("Games played")
-    ax.set_ylabel("Team strength θ")
-    ax.set_title(f"Posterior mean ±2 SD (solid) vs raw win % (dotted), {TEST_SEASON}",
-                 loc="left", fontsize=10, color=INK)
-    fig.savefig(OUT / "fig3_posterior_evolution.png")
+    fig.savefig(OUT / "report_fig2_team_strength.png")
     plt.close(fig)
 
 
