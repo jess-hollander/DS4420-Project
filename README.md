@@ -71,3 +71,31 @@ PyMC. The docstring at the top of `beta_binomial/model.py` summarizes the math.
 | `summary.json` | prior, ρ, home-court posterior and test metrics |
 | `report_fig1_results_table.png` | report Figure 1: test results vs. baselines |
 | `report_fig2_team_strength.png` | report Figure 2: end-of-season posteriors and 95% credible intervals vs. raw win % |
+
+## Method 3: MLP win/loss classifier (`mlp/`)
+
+Built with scikit-learn's `MLPClassifier`. Predicts P(home win) for each game from each team's recent form.
+
+```
+python mlp/01_build_dataset.py     # build pre-game features -> mlp/data/
+python mlp/04_mlp.py               # run method 3 -> mlp/results/, mlp/figs/
+```
+
+- **Features:** for each team, the average over its previous 10 games of effective field goal %, turnover rate, offensive rebound rate, free throw rate, offensive and defensive rating (points scored and allowed per 100 possessions), possessions, and win %, plus days of rest and a back-to-back flag. Each feature is entered as home minus away. Windows are shifted by one game, so a game's own stats never enter its features, and they carry across seasons, so early-season games use the end of last season.
+- **Home court:** every row is from the home team's perspective, so home-court advantage is learned by the network's bias term.
+- **Model:** standardized inputs, ReLU hidden layers, sigmoid output, early stopping.
+- **Tuning (beyond course content):** hidden layer sizes and L2 penalty α chosen by time-series cross-validation (each validation fold uses only games after its training data), scored on log loss. Selected: one hidden layer of 16 units, α = 1.0.
+- **Train/test split:** train on 2021-22 to 2024-25, test on 2025-26. The 5 neutral-site test games are excluded because they have no true home team, leaving 1,225 test games.
+- **Data:** `mlp/01_build_dataset.py` pulls the same LeagueGameLog data from nba_api and builds the rolling features. It does not use `data/games.csv`.
+- **Results:** 65.4% accuracy, log loss 0.625, Brier 0.218, AUC 0.697 on 2025-26, vs. 55.4% for always picking the home team.
+
+### Outputs (`mlp/`)
+
+| File | Contents |
+| --- | --- |
+| `results/mlp_test.csv` | 2025-26 accuracy, log loss, Brier score and AUC for the MLP and the home-team baseline |
+| `figs/mlp_confusion.png` | report Figure 5: test-season confusion matrix |
+| `figs/mlp_calibration.png` | report Figure 6: test-season calibration curve |
+| `data/raw_2021-22.csv` … `raw_2025-26.csv` | raw LeagueGameLog pulls, one file per season |
+| `data/team_games.csv` | one row per team per game, with per-game efficiency stats and rolling features |
+| `data/games_model.csv` | one row per game (home perspective) with `HOME_WIN` and the home-minus-away features used by the MLP |
